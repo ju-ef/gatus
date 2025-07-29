@@ -18,8 +18,9 @@ import (
 	"github.com/TwiN/logr"
 	"github.com/ishidawataru/sctp"
 	"github.com/miekg/dns"
-	"github.com/openrdap/rdap"
 	ping "github.com/prometheus-community/pro-bing"
+	"github.com/registrobr/rdap"
+	"github.com/registrobr/rdap/protocol"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/net/websocket"
 )
@@ -32,7 +33,7 @@ var (
 	// injectedHTTPClient is used for testing purposes
 	injectedHTTPClient *http.Client
 
-	rdapClient               = &rdap.Client{}
+	rdapClient               = rdap.NewClient(nil)
 	whoisExpirationDateCache = gocache.NewCache().WithMaxSize(10000).WithDefaultTTL(24 * time.Hour)
 )
 
@@ -48,13 +49,14 @@ func GetHTTPClient(config *Config) *http.Client {
 }
 
 func rdapGetExpirationDate(hostname string) (expirationDate time.Time, err error) {
-	domain, err := rdapClient.QueryDomain(hostname)
+	data, _, err := rdapClient.Query(hostname, nil, nil)
 	if err != nil {
 		return time.Time{}, err
 	}
+	domain := data.(*protocol.Domain)
 	for _, e := range domain.Events {
 		if e.Action == "expiration" {
-			return time.Parse(time.RFC3339, e.Date)
+			return e.Date.Time, nil
 		}
 	}
 	return time.Time{}, err
