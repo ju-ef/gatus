@@ -16,9 +16,9 @@ import (
 
 	"github.com/TwiN/gocache/v2"
 	"github.com/TwiN/logr"
-	"github.com/TwiN/whois"
 	"github.com/ishidawataru/sctp"
 	"github.com/miekg/dns"
+	"github.com/openrdap/rdap"
 	ping "github.com/prometheus-community/pro-bing"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/net/websocket"
@@ -32,7 +32,7 @@ var (
 	// injectedHTTPClient is used for testing purposes
 	injectedHTTPClient *http.Client
 
-	whoisClient              = whois.NewClient().WithReferralCache(true)
+	rdapClient               = &rdap.Client{}
 	whoisExpirationDateCache = gocache.NewCache().WithMaxSize(10000).WithDefaultTTL(24 * time.Hour)
 )
 
@@ -45,6 +45,19 @@ func GetHTTPClient(config *Config) *http.Client {
 		return defaultConfig.getHTTPClient()
 	}
 	return config.getHTTPClient()
+}
+
+func rdapGetExpirationDate(hostname string) (expirationDate time.Time, err error) {
+	domain, err := rdapClient.QueryDomain(hostname)
+	if err != nil {
+		return time.Time{}, err
+	}
+	for _, e := range domain.Events {
+		if e.Action == "expiration" {
+			return time.Parse(time.RFC3339, e.Date)
+		}
+	}
+	return time.Time{}, err
 }
 
 // GetDomainExpiration retrieves the duration until the domain provided expires
@@ -61,16 +74,16 @@ func GetDomainExpiration(hostname string) (domainExpiration time.Duration, err e
 			return domainExpiration, nil
 		}
 	}
-	if whoisResponse, err := whoisClient.QueryAndParse(hostname); err != nil {
+	if expirationDate, err := rdapGetExpirationDate(hostname); err != nil {
 		if !retrievedCachedValue { // Add an error unless we already retrieved a cached value
-			return 0, fmt.Errorf("error querying and parsing hostname using whois client: %w", err)
+			return 0, fmt.Errorf("error querying and parsing hostname using rdap client: %w", err)
 		}
 	} else {
-		domainExpiration = time.Until(whoisResponse.ExpirationDate)
+		domainExpiration = time.Until(expirationDate)
 		if domainExpiration > 720*time.Hour {
-			whoisExpirationDateCache.SetWithTTL(hostname, whoisResponse.ExpirationDate, 240*time.Hour)
+			whoisExpirationDateCache.SetWithTTL(hostname, expirationDate, 240*time.Hour)
 		} else {
-			whoisExpirationDateCache.SetWithTTL(hostname, whoisResponse.ExpirationDate, 72*time.Hour)
+			whoisExpirationDateCache.SetWithTTL(hostname, expirationDate, 72*time.Hour)
 		}
 	}
 	return domainExpiration, nil
